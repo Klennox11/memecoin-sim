@@ -19,7 +19,7 @@ BOTS = ("SCANNER", "RISK", "TRADER", "EXITS")
 @dataclass
 class Board:
     """Shared 'whiteboard' the bots write to and the dashboard reads from."""
-    logs: dict = field(default_factory=lambda: {b: deque(maxlen=8) for b in BOTS})
+    logs: dict = field(default_factory=lambda: {b: deque(maxlen=25) for b in BOTS})
     status: dict = field(default_factory=lambda: {b: "starting" for b in BOTS})
     counts: dict = field(default_factory=lambda: dict(seen=0, checked=0, rejected=0, approved=0, bought=0))
     reject_reasons: dict = field(default_factory=dict)
