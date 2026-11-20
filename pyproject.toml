@@ -1,0 +1,10 @@
+[project]
+name = "memecoin-sim"
+version = "0.1.0"
+description = "Honest memecoin paper-trading simulator: scanner, risk, trader and exit bots with a terminal HUD"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "httpx>=0.28.1",
+    "rich>=15.0.0",
+]
