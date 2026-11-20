@@ -60,7 +60,8 @@ def render(w: PaperWallet, b: Board, s: Settings, eq_hist: list[float], demo: bo
 
     def bot(name: str):
         t = Text()
-        for ts, msg, style in list(b.logs[name]):
+        fit = max(3, (console.size.height - 18) // 2 - 2)  # only the newest lines that fit on screen
+        for ts, msg, style in list(b.logs[name])[-fit:]:
             t.append(f"{ts} ", "grey50")
             t.append(msg + "\n", style)
         busy = b.status[name] not in ("idle", "waiting")
