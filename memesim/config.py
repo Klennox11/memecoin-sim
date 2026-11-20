@@ -11,7 +11,7 @@ class Settings:
 
     # --- SCANNER
     chain: str = "solana"
-    scan_every_s: int = 20              # DexScreener allows ~60 requests/min on this endpoint
+    scan_every_s: int = 5               # DexScreener allows 60 requests/min on these feeds (we use 24)
 
     # --- RISK (a token must pass ALL of these)
     min_liquidity_usd: float = 15_000   # thin pools = huge slippage and easy rugs
@@ -22,7 +22,7 @@ class Settings:
     max_top10_pct: float = 35.0         # top 10 wallets (excluding the pool) may own at most 35%
     min_lp_locked_pct: float = 80.0     # liquidity must be locked or burned
     max_rugcheck_score: int = 50        # RugCheck normalised risk score 0-100 (lower = safer); 0 = unknown
-    risk_check_every_s: float = 2.0     # be polite to the RugCheck API
+    risk_check_every_s: float = 1.0     # one token per second (backs off by itself if RugCheck says "slow down")
 
     # --- TRADER (entry signal on a token that passed risk)
     min_m5_change_pct: float = 2.0      # price up at least 2% in the last 5 minutes
@@ -37,7 +37,8 @@ class Settings:
     trail_pct: float = 12.0             # ...sell if it falls 12% from its best price
     max_hold_min: float = 30.0
     rug_liq_drop_pct: float = 50.0      # liquidity fell by half since we bought -> get out
-    exit_check_every_s: float = 5.0
+    exit_check_every_s: float = 2.0     # price check on open positions (DexScreener allows 300/min)
+    trade_check_every_s: float = 2.0    # momentum check on the buy list
 
     # --- COSTS (what makes the results honest)
     dex_fee_pct: float = 0.25           # Raydium / PumpSwap pool fee, each trade

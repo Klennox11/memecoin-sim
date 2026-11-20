@@ -21,7 +21,7 @@ from memesim.wallet import DEMO_DB, LIVE_DB, PaperWallet
 def cmd_run(a: argparse.Namespace) -> None:
     s = Settings(start_balance=a.balance, position_usd=a.size)
     if a.demo:  # fast-forward the timers so you see action quickly
-        s.scan_every_s, s.risk_check_every_s, s.exit_check_every_s = 4, 0.5, 1
+        s.scan_every_s, s.risk_check_every_s, s.exit_check_every_s, s.trade_check_every_s = 4, 0.5, 1, 1
         s.min_age_min, s.max_hold_min = 3, 3
     feed = DemoFeed() if a.demo else LiveFeed(s.chain)
     wallet = PaperWallet(s.start_balance, DEMO_DB if a.demo else LIVE_DB)
@@ -48,13 +48,13 @@ def cmd_run(a: argparse.Namespace) -> None:
                 if now - last["scan"] >= s.scan_every_s:
                     last["scan"] = now
                     safe("SCANNER", scanner, feed, b)
-                if now - last["risk"] >= s.risk_check_every_s:
+                if now - last["risk"] >= s.risk_check_every_s and now >= b.backoff_until:
                     last["risk"] = now
                     safe("RISK", risk, feed, b, s)
                 if now - last["exit"] >= s.exit_check_every_s:
                     last["exit"] = now
                     safe("EXITS", exits, feed, wallet, b, s)
-                if now - last["trade"] >= max(s.exit_check_every_s, 5 if not a.demo else 1):
+                if now - last["trade"] >= s.trade_check_every_s:
                     last["trade"] = now
                     safe("TRADER", trader, feed, wallet, b, s)
                 if now - last["eq"] >= 5:

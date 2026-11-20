@@ -1,8 +1,7 @@
-"""Black / cyan / green terminal dashboard."""
-import os
-import sys
+"""Neon terminal dashboard for the 4 memecoin bots."""
 import time
 
+from rich import box
 from rich.console import Console
 from rich.layout import Layout
 from rich.panel import Panel
@@ -11,88 +10,130 @@ from rich.text import Text
 
 from .bots import Board
 from .config import Settings
+from .fx import AMBER, CYAN, DIM, GREEN, RED, TEAL, WHITE, banner, blink, chart, gauge, hud_panel, pulse, tape
 from .wallet import PaperWallet
 
 console = Console(style="white on black", highlight=False)
-FANCY = sys.platform != "win32" or "WT_SESSION" in os.environ  # old PowerShell window can't draw blocks
-BLOCKS = "▁▂▃▄▅▆▇█" if FANCY else "_.-~=+*#"
+NEON = {"green": GREEN, "bold green": f"bold {GREEN}", "cyan": CYAN, "red": RED, "bold red": f"bold {RED}",
+        "grey50": DIM, "white": WHITE}
+BOT_ROLES = {"SCANNER": "finds new tokens", "RISK": "rejects scams & rugs",
+             "TRADER": "pretend buys on momentum", "EXITS": "pretend sells: TP / SL / rug"}
 
 
-def sparkline(vals: list[float], width: int = 40) -> str:
-    if len(vals) < 2:
-        return ""
-    step = max(1, len(vals) // width)
-    pts = vals[::step][-width:]
-    lo, hi = min(pts), max(pts)
-    span = hi - lo or 1
-    return "".join(BLOCKS[int((p - lo) / span * (len(BLOCKS) - 1))] for p in pts)
+def panel(body, title: str, color: str = "cyan") -> Panel:  # used by the report command
+    return hud_panel(body, title)
 
 
-def panel(body, title: str, color: str = "cyan") -> Panel:
-    return Panel(body, title=f"[bold cyan]// {title}[/]", border_style=color, style="on black")
-
-
-def money(x: float) -> str:
-    return f"${x:+,.2f}"
+def tiny(px: float) -> str:
+    """Memecoin prices are tiny: 0.0000123 -> $0.0000123"""
+    return f"${px:.3g}" if px < 1 else f"${px:,.2f}"
 
 
 def render(w: PaperWallet, b: Board, s: Settings, eq_hist: list[float], demo: bool) -> Layout:
+    W, H = console.size.width, console.size.height
     eq = w.equity()
     pnl = eq - w.start
+    up = pnl >= 0
     st = w.stats()
-    up = int(time.time() - b.started)
+    positions = w.positions()
     c = b.counts
-    win = f"{st['wins']}/{st['n']} ({st['wins'] / st['n']:.0%})" if st["n"] else "0/0"
-    head = Text.assemble(
-        ("MEMECOIN-SIM ", "bold cyan"), ("// 4-BOT PAPER TRADER ", "bold green"),
-        (f"// {s.chain.upper()} {'// DEMO DATA' if demo else '// LIVE DATA (DexScreener + RugCheck)'}\n", "bold white"),
-        ("Equity ", "grey50"), (f"${eq:,.2f}  ", "bold white"),
-        ("P&L ", "grey50"), (f"{money(pnl)} ({pnl / w.start:+.1%})  ", "bold green" if pnl >= 0 else "bold red"),
-        ("Cash ", "grey50"), (f"${w.cash:,.2f}  ", "white"),
-        ("Wins ", "grey50"), (f"{win}  ", "white"),
-        ("Uptime ", "grey50"), (f"{up // 3600}h{up // 60 % 60:02d}m{up % 60:02d}s\n", "white"),
-        ("Funnel ", "grey50"),
-        (f"seen {c['seen']} -> checked {c['checked']} -> ", "white"),
-        (f"rejected {c['rejected']} ", "red"), ("/ ", "grey50"), (f"approved {c['approved']} ", "green"),
-        (f"-> bought {c['bought']}   ", "bold green"),
-        ("Equity ", "grey50"), (sparkline(eq_hist), "cyan"),
-    )
+    t_up = int(time.time() - b.started)
 
-    def bot(name: str):
-        t = Text()
-        fit = max(3, (console.size.height - 18) // 2 - 2)  # only the newest lines that fit on screen
+    # --- title
+    mode = "DEMO MARKET" if demo else "LIVE: DexScreener + RugCheck"
+    title_box = Text.assemble(banner("MEMECOIN"), "\n", (f"{s.chain.upper()} // {mode}", DIM))
+
+    # --- wallet status
+    stat = Text()
+    stat.append_text(blink("■ SCANNING ", GREEN, "#0c4a12"))
+    stat.append(f"uptime {t_up // 3600}h{t_up // 60 % 60:02d}m{t_up % 60:02d}s   ", WHITE)
+    stat.append("Ctrl+C to stop\n", DIM)
+    stat.append("EQUITY ", DIM)
+    stat.append(f"${eq:,.2f}   ", f"bold {WHITE}")
+    stat.append("P&L ", DIM)
+    stat.append(f"{'▲' if up else '▼'} ${abs(pnl):,.2f} ({pnl / w.start:+.1%})   ", f"bold {GREEN if up else RED}")
+    stat.append("CASH ", DIM)
+    stat.append(f"${w.cash:,.2f}\n", WHITE)
+    stat.append("IN TRADES ", DIM)
+    stat.append_text(gauge(len(positions) / s.max_positions, 14, CYAN))
+    stat.append(f" {len(positions)}/{s.max_positions}   ", CYAN)
+    stat.append("WINS ", DIM)
+    stat.append(f"{st['wins']}/{st['n']}" + (f" ({st['wins'] / st['n']:.0%})" if st["n"] else ""), WHITE)
+    if st["best"] is not None:
+        stat.append("   BEST ", DIM)
+        stat.append(f"{st['best']:+.0f}%", GREEN)
+        stat.append("  WORST ", DIM)
+        stat.append(f"{st['worst']:+.0f}%", RED)
+    stat.append("\nFUNNEL ", DIM)
+    stat.append(f"seen {c['seen']} ► checked {c['checked']} ► ", WHITE)
+    stat.append(f"rejected {c['rejected']} ", RED)
+    stat.append("│ ", TEAL)
+    stat.append(f"passed {c['approved']} ", GREEN)
+    stat.append(f"► bought {c['bought']}", f"bold {GREEN}")
+
+    # --- ticker tape: open positions, else the buy list, else the funnel
+    if positions:
+        items = [(p["symbol"], tiny(p["last_price"]), (p["last_price"] / p["entry_price"] - 1) * 100) for p in positions]
+    else:
+        items = [(sym, "on buy list", 0.0) for sym, _ in list(b.approved.values())[:8]] or \
+                [("SCANNING", f"{c['seen']} tokens seen", 0.0), ("REJECTED", f"{c['rejected']} scams/risky", 0.0)]
+
+    # --- bots
+    fit = max(3, (H - 23) // 2 - 2)
+
+    def bot_panel(name: str):
+        txt = Text()
         for ts, msg, style in list(b.logs[name])[-fit:]:
-            t.append(f"{ts} ", "grey50")
-            t.append(msg + "\n", style)
-        busy = b.status[name] not in ("idle", "waiting")
-        return panel(t, f"{name} BOT ({b.status[name]})", "green" if busy else "cyan")
+            txt.append(f"{ts} ", DIM)
+            txt.append("► ", TEAL)
+            txt.append(msg + "\n", NEON.get(style, style))
+        busy = b.status[name] not in ("idle", "waiting", "starting")
+        head = Text.assemble(pulse(busy), " ", (f"{name} BOT", f"bold {CYAN}"),
+                             (f"  {b.status[name].upper()}", RED if b.status[name] == "error" else GREEN if busy else DIM))
+        return hud_panel(txt, head, busy, BOT_ROLES[name])
 
-    pos = Table(border_style="cyan", header_style="bold white", style="on black", expand=True)
-    for col in ("Token", "Entry", "Now", "P&L", "Held", "Liquidity"):
-        pos.add_column(col, justify="left" if col == "Token" else "right")
-    for p in w.positions():
+    # --- positions
+    pos = Table(box=box.SIMPLE_HEAD, border_style=TEAL, header_style=f"bold {CYAN}", style="on black",
+                expand=True, padding=(0, 1), show_edge=False)
+    for col in ("TOKEN", "ENTRY", "NOW", "P&L", "HELD", "LIQ"):
+        pos.add_column(col, justify="left" if col == "TOKEN" else "right")
+    for p in positions:
         chg = (p["last_price"] / p["entry_price"] - 1) * 100
         held = (time.time() - p["entry_time"]) / 60
-        pos.add_row(p["symbol"], f"{p['entry_price']:.3g}", f"{p['last_price']:.3g}",
-                    Text(f"{chg:+.1f}%", "green" if chg >= 0 else "red"), f"{held:.0f}m", f"${p['last_liq']:,.0f}")
+        pos.add_row(Text(p["symbol"], f"bold {WHITE}"), tiny(p["entry_price"]), tiny(p["last_price"]),
+                    Text(f"{'▲' if chg >= 0 else '▼'}{abs(chg):.1f}%", GREEN if chg >= 0 else RED),
+                    f"{held:.0f}m", f"${p['last_liq'] / 1000:,.0f}k")
+    if not positions:
+        pos.add_row(Text("no open positions", DIM), "", "", "", "", "")
 
+    # --- closed trades + reject reasons
     tr = Text()
     for t in w.trades(8):
-        tr.append(f"{t['symbol']:<9}", "white")
-        tr.append(f"{money(t['pnl']):>9} {t['pnl_pct']:+6.1f}%  ", "green" if t["pnl"] > 0 else "red")
-        tr.append(f"{t['reason']}\n", "grey50")
-    top = sorted(b.reject_reasons.items(), key=lambda kv: -kv[1])[:4]
+        win = t["pnl"] > 0
+        tr.append(f"{'▲' if win else '▼'} ", GREEN if win else RED)
+        tr.append(f"{t['symbol']:<8}", WHITE)
+        tr.append(f"{t['pnl_pct']:+6.1f}% ", GREEN if win else RED)
+        tr.append(f"{t['reason'].split(' (')[0][:16]}\n", DIM)
+    if not tr.plain:
+        tr.append("no closed trades yet\n", DIM)
+    top = sorted(b.reject_reasons.items(), key=lambda kv: -kv[1])[:3]
     if top:
-        tr.append("\nTop reject reasons: ", "cyan")
-        tr.append(", ".join(f"{k} ({v})" for k, v in top), "grey50")
+        tr.append("TOP REJECTS ", f"bold {AMBER}")
+        tr.append(", ".join(f"{k[:24]} ({v})" for k, v in top), DIM)
+
+    bottom_h = 13
+    eq_panel = hud_panel(chart(eq_hist or [eq], max(10, W * 2 // 7 - 14), bottom_h - 2), "EQUITY CURVE")
 
     lay = Layout()
-    lay.split_column(Layout(panel(head, "WALLET (FAKE MONEY)"), size=5), Layout(name="bots"),
-                     Layout(name="bottom", size=12),
-                     Layout(Text(" SIMULATED. Real bots would do worse: faster competitors, failed transactions, "
-                                 "MEV sandwiches, and data that is seconds old.", "grey50"), size=1))
+    lay.split_column(Layout(name="top", size=6), Layout(tape(items, W), size=1), Layout(name="bots"),
+                     Layout(name="bottom", size=bottom_h),
+                     Layout(Text(" ■ SIMULATED. Real bots would do worse: faster competitors, failed transactions, "
+                                 "MEV sandwiches, data seconds old.", AMBER), size=1))
+    lay["top"].split_row(Layout(hud_panel(title_box, "4-BOT PAPER TRADER", subtitle="no wallet · no real money"), size=48),
+                         Layout(hud_panel(stat, "WALLET (FAKE MONEY)", up)))
     lay["bots"].split_row(Layout(name="l"), Layout(name="r"))
-    lay["bots"]["l"].split_column(Layout(bot("SCANNER")), Layout(bot("RISK")))
-    lay["bots"]["r"].split_column(Layout(bot("TRADER")), Layout(bot("EXITS")))
-    lay["bottom"].split_row(Layout(panel(pos, "OPEN POSITIONS")), Layout(panel(tr, "CLOSED TRADES")))
+    lay["bots"]["l"].split_column(Layout(bot_panel("SCANNER")), Layout(bot_panel("RISK")))
+    lay["bots"]["r"].split_column(Layout(bot_panel("TRADER")), Layout(bot_panel("EXITS")))
+    lay["bottom"].split_row(Layout(eq_panel, ratio=2), Layout(hud_panel(pos, "OPEN POSITIONS"), ratio=3),
+                            Layout(hud_panel(tr, "CLOSED TRADES"), ratio=2))
     return lay

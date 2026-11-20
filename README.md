@@ -9,7 +9,7 @@ realistic costs, and its results show how hard this really is.
 ## The 4 bots
 | Bot | Job |
 |---|---|
-| **SCANNER** | Polls DexScreener's free public feeds for newly listed Solana tokens |
+| **SCANNER** | Polls DexScreener's free public feeds for newly listed Solana tokens every 5 s; tokens too new to judge are re-checked once they're 10 min old |
 | **RISK** | Rejects a token unless it passes **every** check: liquidity >= $15k, age 10 min to 24 h, mint authority revoked, freeze authority revoked (otherwise you may be unable to sell), real sells happening (honeypot check), top-10 wallets own <= 35%, liquidity >= 80% locked/burned, RugCheck risk score <= 50 |
 | **TRADER** | Pretend-buys an approved token when it has momentum (up >= 2% in 5 min, more buys than sells, >= $2k volume). Max 5 positions, never more than 2% of the pool |
 | **EXITS** | Pretend-sells on take profit (+40%), stop loss (-20%), trailing stop (-12% from peak once up 15%), 30-minute time limit, or a rug (liquidity drops 50%) |

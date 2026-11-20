@@ -28,6 +28,8 @@ class Board:
     approved: dict = field(default_factory=dict)      # address -> (symbol, approved_at)
     started: float = field(default_factory=time.time)
     errors: int = 0
+    later: list = field(default_factory=list)         # (recheck_time, address) for tokens that were too new
+    backoff_until: float = 0.0                        # pause RISK checks if an API says "too many requests"
 
     def log(self, bot: str, msg: str, style: str = "white") -> None:
         if self.logs[bot] and self.logs[bot][-1][1] == msg:  # don't spam the same line
@@ -37,12 +39,19 @@ class Board:
 
 def scanner(feed, b: Board) -> None:
     b.status["SCANNER"] = "scanning"
+    now = time.time()
+    due = [a for t, a in b.later if t <= now]  # too-new tokens that are now old enough: check again
+    b.later = [(t, a) for t, a in b.later if t > now]
+    b.queue.extend(due)
     new = [a for a in feed.latest_tokens() if a not in b.seen]
     for a in new:
         b.seen.add(a)
         b.queue.append(a)
     b.counts["seen"] += len(new)
-    b.log("SCANNER", f"{len(new)} new token(s) found, {len(b.queue)} waiting for RISK", "cyan" if new else "grey50")
+    msg = f"{len(new)} new token(s) found, {len(b.queue)} waiting for RISK"
+    if b.later:
+        msg += f", {len(b.later)} too new (recheck later)"
+    b.log("SCANNER", msg, "cyan" if new else "grey50")
     b.status["SCANNER"] = "idle"
 
 
@@ -88,11 +97,27 @@ def risk(feed, b: Board, s: Settings) -> None:
     b.status["RISK"] = "checking"
     addr = b.queue.popleft()
     pair = feed.pairs([addr]).get(addr)
+    # Too new? Don't throw it away: put it aside and check again once it's old enough.
+    if pair and pair["created_ms"]:
+        age_min = (time.time() * 1000 - pair["created_ms"]) / 60_000
+        if age_min < s.min_age_min:
+            b.later.append((time.time() + (s.min_age_min - age_min) * 60 + 5, addr))
+            b.log("RISK", f"WAIT {pair['symbol']}: only {age_min:.0f} min old, recheck in "
+                          f"{s.min_age_min - age_min:.0f} min", "grey50")
+            b.status["RISK"] = "idle"
+            return
     safety = None
     if pair:
         try:
             safety = feed.safety(addr)
         except Exception as e:
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            if status == 429:  # "too many requests": wait 15 s, then retry this token
+                b.queue.appendleft(addr)
+                b.backoff_until = time.time() + 15
+                b.log("RISK", "RugCheck says slow down - pausing 15 s", "grey50")
+                b.status["RISK"] = "cooling down"
+                return
             b.log("RISK", f"RugCheck lookup failed ({type(e).__name__})", "grey50")
     fails = risk_check(pair, safety, s)
     sym = pair["symbol"] if pair else addr[:6]
